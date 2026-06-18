@@ -323,6 +323,7 @@
 
     async function submitEdits() {
       els.send.disabled = true;
+      try { els.video.pause(); } catch (e) {}   // stop playback when sending
       showStatus("שולח לעריכה מחדש…");
       const words = fullWords.map(({ _orig, _edited, ...w }) => w); // strip helper fields
       try {
