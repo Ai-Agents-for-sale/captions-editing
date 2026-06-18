@@ -244,7 +244,8 @@
         span.textContent = w.text;
         span.addEventListener("input", () => {
           const i = Number(span.dataset.idx);
-          fullWords[i]._edited = (span.textContent !== fullWords[i]._orig);
+          fullWords[i].text = span.textContent.replace(/\s+/g, ' ').trim();   // ← persist the edit into the model
+          fullWords[i]._edited = (fullWords[i].text !== fullWords[i]._orig);
           span.classList.toggle("edited", fullWords[i]._edited);
         });
         // tap a word -> seek the video to that word
