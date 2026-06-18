@@ -14,6 +14,7 @@
       --muted: #9aa3b2;
       --accent: #2ea6ff;
       --accent-press: #1b86d6;
+      --active: #2ea6ff;
       --edited: #f0b429;
       --ok: #2ecc71;
       --danger: #ff5c5c;
@@ -33,6 +34,7 @@
 
     /* ---------- Video (top) ---------- */
     #videoWrap {
+      position: relative;
       background: #000;
       flex: 0 0 auto;
       display: flex;
@@ -45,6 +47,20 @@
       max-height: 42vh;
       object-fit: contain;
       background: #000;
+    }
+    #unmute {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,.65);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.25);
+      border-radius: 20px;
+      padding: 7px 13px;
+      font-size: 13px;
+      cursor: pointer;
+      display: none;
+      backdrop-filter: blur(4px);
     }
 
     /* ---------- Header ---------- */
@@ -74,7 +90,7 @@
       outline: none;
       font-size: 17px;
       white-space: pre;
-      transition: background .12s, border-color .12s;
+      transition: background .1s, border-color .1s, transform .1s;
     }
     .word:focus {
       background: #0d1b2a;
@@ -83,6 +99,13 @@
     .word.edited {
       border-color: var(--edited);
       background: #2a2410;
+    }
+    .word.active {
+      background: var(--active);
+      color: #fff;
+      border-color: var(--active);
+      transform: scale(1.06);
+      box-shadow: 0 0 0 3px rgba(46,166,255,.25);
     }
     .punct {
       background: transparent;
@@ -137,7 +160,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     #status .msg { font-size: 15px; color: var(--muted); max-width: 320px; }
     #status .big { font-size: 44px; }
-    .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 4px; text-align: center; }
   </style>
 </head>
 <body>
@@ -149,13 +172,14 @@
 
   <!-- Video -->
   <div id="videoWrap">
-    <video id="video" controls playsinline preload="metadata"></video>
+    <video id="video" playsinline preload="auto"></video>
+    <button id="unmute">🔇 הקש להפעלת קול</button>
   </div>
 
   <!-- Header -->
   <div id="head">
     <h1>עריכת כתוביות</h1>
-    <p>הקש על כל מילה כדי לתקן אותה, ואז שלח לעריכה מחדש</p>
+    <p>המילה הנשמעת מודגשת בזמן הניגון · הקש על כל מילה כדי לתקן</p>
   </div>
 
   <!-- Words -->
@@ -178,14 +202,15 @@
     const qs = new URLSearchParams(location.search);
     const API_BASE = (qs.get("api") || "https://aiagentsforsale.app.n8n.cloud/webhook").replace(/\/$/, "");
     const projectId   = qs.get("projectId")   || "";
-    const dropboxPath  = qs.get("dropboxPath") || "";
-    const chatId       = qs.get("chatId")      || "";
+    const dropboxPath = qs.get("dropboxPath")  || "";
+    const chatId      = qs.get("chatId")       || "";
 
     const els = {
       status: document.getElementById("status"),
       spinner: document.getElementById("spinner"),
       statusMsg: document.getElementById("statusMsg"),
       video: document.getElementById("video"),
+      unmute: document.getElementById("unmute"),
       words: document.getElementById("wordsWrap"),
       send: document.getElementById("sendBtn"),
       footHint: document.getElementById("footHint"),
@@ -193,6 +218,9 @@
 
     // full words array from Submagic (kept intact, incl. silences)
     let fullWords = [];
+    // timed, editable tokens for karaoke: { idx, start, end, el }
+    let timeline = [];
+    let activeIdx = -1;
 
     function showStatus(msg, { spinner = true, big = "" } = {}) {
       els.status.classList.remove("hidden");
@@ -205,6 +233,7 @@
 
     function renderWords() {
       els.words.innerHTML = "";
+      timeline = [];
       fullWords.forEach((w, idx) => {
         if (!isEditable(w)) return; // skip silence tokens (kept in model, not shown)
         const span = document.createElement("span");
@@ -215,13 +244,53 @@
         span.textContent = w.text;
         span.addEventListener("input", () => {
           const i = Number(span.dataset.idx);
-          const newText = span.textContent;
-          fullWords[i]._edited = (newText !== fullWords[i]._orig);
+          fullWords[i]._edited = (span.textContent !== fullWords[i]._orig);
           span.classList.toggle("edited", fullWords[i]._edited);
         });
+        // tap a word -> seek the video to that word
+        span.addEventListener("dblclick", () => {
+          if (isFinite(w.startTime)) els.video.currentTime = w.startTime;
+        });
         els.words.appendChild(span);
-        // a normal space between tokens for readability
         els.words.appendChild(document.createTextNode(" "));
+        if (w.type === "word") {
+          timeline.push({ idx, start: w.startTime, end: w.endTime, el: span });
+        }
+      });
+    }
+
+    // ---- Karaoke: highlight the word currently being heard ----
+    function highlightAt(t) {
+      // find token where start <= t < end (linear; lists are short)
+      let found = -1;
+      for (let k = 0; k < timeline.length; k++) {
+        if (t >= timeline[k].start && t < timeline[k].end) { found = k; break; }
+      }
+      if (found === activeIdx) return;
+      if (activeIdx !== -1 && timeline[activeIdx]) timeline[activeIdx].el.classList.remove("active");
+      activeIdx = found;
+      if (found === -1) return;
+      const el = timeline[found].el;
+      el.classList.add("active");
+      // don't yank the view while the user is editing a word
+      const editing = document.activeElement && document.activeElement.classList.contains("word");
+      if (!editing) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+
+    function setupVideo(url) {
+      if (!url) { document.getElementById("videoWrap").style.display = "none"; return; }
+      els.video.src = url;
+      els.video.addEventListener("timeupdate", () => highlightAt(els.video.currentTime));
+
+      // autoplay: try with sound, fall back to muted (mobile blocks unmuted autoplay)
+      els.video.play().catch(() => {
+        els.video.muted = true;
+        els.video.play().then(() => { els.unmute.style.display = "block"; }).catch(() => {});
+      });
+      els.unmute.addEventListener("click", () => {
+        els.video.muted = false;
+        els.unmute.style.display = "none";
+        els.video.play().catch(() => {});
       });
     }
 
@@ -238,17 +307,12 @@
         const data = await res.json();
         fullWords = (data.words || []).map(w => ({ ...w, _orig: w.text, _edited: false }));
 
-        if (data.videoUrl) {
-          els.video.src = data.videoUrl;
-        } else {
-          els.video.style.display = "none";
-        }
-
         if (!fullWords.length) {
           showStatus("לא נמצאו כתוביות לפרויקט הזה.", { spinner: false, big: "🤔" });
           return;
         }
         renderWords();
+        setupVideo(data.videoUrl || "");
         els.send.disabled = false;
         hideStatus();
       } catch (err) {
@@ -259,8 +323,7 @@
     async function submitEdits() {
       els.send.disabled = true;
       showStatus("שולח לעריכה מחדש…");
-      // strip helper fields before sending
-      const words = fullWords.map(({ _orig, _edited, ...w }) => w);
+      const words = fullWords.map(({ _orig, _edited, ...w }) => w); // strip helper fields
       try {
         const res = await fetch(`${API_BASE}/subtitle-update`, {
           method: "POST",
