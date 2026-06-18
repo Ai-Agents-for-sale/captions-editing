@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>עריכת כתוביות</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-2: #1f232c;
+      --text: #f3f4f6;
+      --muted: #9aa3b2;
+      --accent: #2ea6ff;
+      --accent-press: #1b86d6;
+      --edited: #f0b429;
+      --ok: #2ecc71;
+      --danger: #ff5c5c;
+      --border: #2a2f3a;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ---------- Video (top) ---------- */
+    #videoWrap {
+      background: #000;
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      max-height: 42vh;
+    }
+    #video {
+      width: 100%;
+      max-height: 42vh;
+      object-fit: contain;
+      background: #000;
+    }
+
+    /* ---------- Header ---------- */
+    #head {
+      padding: 10px 14px 6px;
+      flex: 0 0 auto;
+      border-bottom: 1px solid var(--border);
+    }
+    #head h1 { font-size: 16px; margin: 0 0 2px; font-weight: 700; }
+    #head p { font-size: 12px; color: var(--muted); margin: 0; }
+
+    /* ---------- Words (scrollable) ---------- */
+    #wordsWrap {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 14px;
+      line-height: 2.4;
+    }
+    .word {
+      display: inline-block;
+      padding: 2px 7px;
+      margin: 3px 2px;
+      border-radius: 8px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      cursor: text;
+      outline: none;
+      font-size: 17px;
+      white-space: pre;
+      transition: background .12s, border-color .12s;
+    }
+    .word:focus {
+      background: #0d1b2a;
+      border-color: var(--accent);
+    }
+    .word.edited {
+      border-color: var(--edited);
+      background: #2a2410;
+    }
+    .punct {
+      background: transparent;
+      border: 1px solid transparent;
+      padding: 2px 1px;
+      cursor: default;
+    }
+
+    /* ---------- Footer / button ---------- */
+    #foot {
+      flex: 0 0 auto;
+      padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+    }
+    #sendBtn {
+      width: 100%;
+      border: none;
+      border-radius: 12px;
+      padding: 15px;
+      font-size: 17px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--accent);
+      cursor: pointer;
+    }
+    #sendBtn:active { background: var(--accent-press); }
+    #sendBtn:disabled { opacity: .5; cursor: default; }
+
+    /* ---------- States ---------- */
+    #status {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 14px;
+      padding: 30px;
+      background: var(--bg);
+      z-index: 10;
+    }
+    #status.hidden { display: none; }
+    .spinner {
+      width: 38px; height: 38px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status .msg { font-size: 15px; color: var(--muted); max-width: 320px; }
+    #status .big { font-size: 44px; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <!-- Overlay: loading / error / success -->
+  <div id="status">
+    <div class="spinner" id="spinner"></div>
+    <div class="msg" id="statusMsg">טוען כתוביות…</div>
+  </div>
+
+  <!-- Video -->
+  <div id="videoWrap">
+    <video id="video" controls playsinline preload="metadata"></video>
+  </div>
+
+  <!-- Header -->
+  <div id="head">
+    <h1>עריכת כתוביות</h1>
+    <p>הקש על כל מילה כדי לתקן אותה, ואז שלח לעריכה מחדש</p>
+  </div>
+
+  <!-- Words -->
+  <div id="wordsWrap"></div>
+
+  <!-- Footer -->
+  <div id="foot">
+    <button id="sendBtn" disabled>שלח לעריכה</button>
+    <div class="hint" id="footHint"></div>
+  </div>
+
+  <script>
+    "use strict";
+
+    // ---- Telegram WebApp init ----
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+
+    // ---- Read params ----
+    const qs = new URLSearchParams(location.search);
+    const API_BASE = (qs.get("api") || "https://aiagentsforsale.app.n8n.cloud/webhook").replace(/\/$/, "");
+    const projectId   = qs.get("projectId")   || "";
+    const dropboxPath  = qs.get("dropboxPath") || "";
+    const chatId       = qs.get("chatId")      || "";
+
+    const els = {
+      status: document.getElementById("status"),
+      spinner: document.getElementById("spinner"),
+      statusMsg: document.getElementById("statusMsg"),
+      video: document.getElementById("video"),
+      words: document.getElementById("wordsWrap"),
+      send: document.getElementById("sendBtn"),
+      footHint: document.getElementById("footHint"),
+    };
+
+    // full words array from Submagic (kept intact, incl. silences)
+    let fullWords = [];
+
+    function showStatus(msg, { spinner = true, big = "" } = {}) {
+      els.status.classList.remove("hidden");
+      els.spinner.style.display = spinner ? "" : "none";
+      els.statusMsg.innerHTML = (big ? `<div class="big">${big}</div>` : "") + msg;
+    }
+    function hideStatus() { els.status.classList.add("hidden"); }
+
+    function isEditable(w) { return w.type === "word" || w.type === "punctuation"; }
+
+    function renderWords() {
+      els.words.innerHTML = "";
+      fullWords.forEach((w, idx) => {
+        if (!isEditable(w)) return; // skip silence tokens (kept in model, not shown)
+        const span = document.createElement("span");
+        span.className = "word" + (w.type === "punctuation" ? " punct" : "");
+        span.contentEditable = "true";
+        span.spellcheck = false;
+        span.dataset.idx = String(idx);
+        span.textContent = w.text;
+        span.addEventListener("input", () => {
+          const i = Number(span.dataset.idx);
+          const newText = span.textContent;
+          fullWords[i]._edited = (newText !== fullWords[i]._orig);
+          span.classList.toggle("edited", fullWords[i]._edited);
+        });
+        els.words.appendChild(span);
+        // a normal space between tokens for readability
+        els.words.appendChild(document.createTextNode(" "));
+      });
+    }
+
+    async function loadProject() {
+      if (!projectId) { showStatus("חסר מזהה פרויקט (projectId).", { spinner: false, big: "⚠️" }); return; }
+      showStatus("טוען כתוביות…");
+      try {
+        const res = await fetch(`${API_BASE}/subtitle-fetch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, dropboxPath }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        fullWords = (data.words || []).map(w => ({ ...w, _orig: w.text, _edited: false }));
+
+        if (data.videoUrl) {
+          els.video.src = data.videoUrl;
+        } else {
+          els.video.style.display = "none";
+        }
+
+        if (!fullWords.length) {
+          showStatus("לא נמצאו כתוביות לפרויקט הזה.", { spinner: false, big: "🤔" });
+          return;
+        }
+        renderWords();
+        els.send.disabled = false;
+        hideStatus();
+      } catch (err) {
+        showStatus("שגיאה בטעינת הכתוביות. נסה לסגור ולפתוח שוב.<br><br>" + (err.message || ""), { spinner: false, big: "⚠️" });
+      }
+    }
+
+    async function submitEdits() {
+      els.send.disabled = true;
+      showStatus("שולח לעריכה מחדש…");
+      // strip helper fields before sending
+      const words = fullWords.map(({ _orig, _edited, ...w }) => w);
+      try {
+        const res = await fetch(`${API_BASE}/subtitle-update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, dropboxPath, chatId, words }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        showStatus(
+          "הכתוביות נשלחו לעריכה מחדש.<br>ברגע שהסרטון המעודכן יהיה מוכן תקבל הודעה בטלגרם.",
+          { spinner: false, big: "✅" }
+        );
+        if (tg) setTimeout(() => { try { tg.close(); } catch (e) {} }, 2200);
+      } catch (err) {
+        showStatus("שליחה נכשלה. נסה שוב.<br><br>" + (err.message || ""), { spinner: false, big: "⚠️" });
+        els.send.disabled = false;
+      }
+    }
+
+    els.send.addEventListener("click", submitEdits);
+    loadProject();
+  </script>
+</body>
+</html>
