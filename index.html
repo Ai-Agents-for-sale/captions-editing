@@ -306,6 +306,14 @@
         });
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
+
+        // Safety net: backend verified this clip can't actually be re-edited
+        // (e.g. an older magic-clip made before subtitle editing was available).
+        if (data.editable === false) {
+          showStatus("לסרטון זה לא ניתן לערוך כתוביות.<br>הוא נוצר לפני שהפיצ׳ר הושק 🙏", { spinner: false, big: "🔒" });
+          return;
+        }
+
         fullWords = (data.words || []).map(w => ({ ...w, _orig: w.text, _edited: false }));
 
         if (!fullWords.length) {
