@@ -134,6 +134,9 @@
     }
     #sendBtn:active { background: var(--accent-press); }
     #sendBtn:disabled { opacity: .5; cursor: default; }
+    .word.toolong { border-color: var(--danger); background: #2a1010; color: #ffb4b4; }
+    #warn { display: none; color: var(--danger); font-size: 12px; font-weight: 700; text-align: center; margin: 0 0 10px; padding: 8px 10px; background: rgba(255,92,92,0.12); border-radius: 8px; }
+    #warn.show { display: block; }
 
     /* ---------- States ---------- */
     #status {
@@ -179,7 +182,7 @@
   <!-- Header -->
   <div id="head">
     <h1>עריכת כתוביות</h1>
-    <p>המילה הנשמעת מודגשת בזמן הניגון · הקש על כל מילה כדי לתקן</p>
+    <p>הקש על מילה כדי לתקן אותה — הסרטון יקפוץ לאותה נקודה כדי שתשמע אותה 🔊</p>
   </div>
 
   <!-- Words -->
@@ -187,6 +190,7 @@
 
   <!-- Footer -->
   <div id="foot">
+    <div id="warn"></div>
     <button id="sendBtn" disabled>שלח לעריכה</button>
     <div class="hint" id="footHint"></div>
   </div>
@@ -231,6 +235,34 @@
 
     function isEditable(w) { return w.type === "word" || w.type === "punctuation"; }
 
+    const MAX_WORD_CHARS = 100; // Submagic rejects over-long single words; block before sending
+
+    // Flag over-long words (red), show a hint, and block send until fixed.
+    function validateLen() {
+      let tooLong = 0;
+      els.words.querySelectorAll(".word").forEach((span) => {
+        const over = (span.textContent || "").length > MAX_WORD_CHARS;
+        span.classList.toggle("toolong", over);
+        if (over) tooLong++;
+      });
+      const warn = document.getElementById("warn");
+      if (tooLong > 0) {
+        warn.textContent = `יש מילה ארוכה מדי (מעל ${MAX_WORD_CHARS} תווים) — קצר אותה כדי לשלוח`;
+        warn.classList.add("show");
+        els.send.disabled = true;
+      } else {
+        warn.classList.remove("show");
+        els.send.disabled = false;
+      }
+    }
+
+    // Keep the send button above the on-screen keyboard.
+    function fitViewport() {
+      const vv = window.visualViewport;
+      if (vv) document.body.style.height = vv.height + "px";
+    }
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", fitViewport);
+
     function renderWords() {
       els.words.innerHTML = "";
       timeline = [];
@@ -247,10 +279,11 @@
           fullWords[i].text = span.textContent.replace(/\s+/g, ' ').trim();   // ← persist the edit into the model
           fullWords[i]._edited = (fullWords[i].text !== fullWords[i]._orig);
           span.classList.toggle("edited", fullWords[i]._edited);
+          validateLen();
         });
-        // tap a word -> seek the video to that word
-        span.addEventListener("dblclick", () => {
-          if (isFinite(w.startTime)) els.video.currentTime = w.startTime;
+        // tap a word -> jump the video to it (and pause) so you can hear what you're fixing
+        span.addEventListener("focus", () => {
+          if (isFinite(w.startTime)) { try { els.video.pause(); } catch (e) {} els.video.currentTime = w.startTime; }
         });
         els.words.appendChild(span);
         els.words.appendChild(document.createTextNode(" "));
@@ -258,6 +291,7 @@
           timeline.push({ idx, start: w.startTime, end: w.endTime, el: span });
         }
       });
+      validateLen();
     }
 
     // ---- Karaoke: highlight the word currently being heard ----
@@ -330,6 +364,8 @@
     }
 
     async function submitEdits() {
+      // guard: never send a clip with an over-long word (Submagic would reject it)
+      if (els.words.querySelector(".word.toolong")) { validateLen(); return; }
       els.send.disabled = true;
       try { els.video.pause(); } catch (e) {}   // stop playback when sending
       showStatus("שולח לעריכה מחדש…");
