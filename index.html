@@ -235,7 +235,7 @@
 
     function isEditable(w) { return w.type === "word" || w.type === "punctuation"; }
 
-    const MAX_WORD_CHARS = 100; // Submagic rejects over-long single words; block before sending
+    const MAX_WORD_CHARS = 50; // Submagic rejects over-long single words; block before sending
 
     // Flag over-long words (red), show a hint, and block send until fixed.
     function validateLen() {
@@ -281,9 +281,9 @@
           span.classList.toggle("edited", fullWords[i]._edited);
           validateLen();
         });
-        // tap a word -> jump the video to it (and pause) so you can hear what you're fixing
+        // tap a word -> jump the video to it (keeps playing) so you can hear what you're fixing
         span.addEventListener("focus", () => {
-          if (isFinite(w.startTime)) { try { els.video.pause(); } catch (e) {} els.video.currentTime = w.startTime; }
+          if (isFinite(w.startTime)) els.video.currentTime = w.startTime;
         });
         els.words.appendChild(span);
         els.words.appendChild(document.createTextNode(" "));
